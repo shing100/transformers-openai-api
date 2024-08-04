@@ -96,6 +96,8 @@ openai.api_base = 'http://localhost:13000/v1'
 4. 개발 모드로 실행:
    ```
    transformers-openai-api --config /path/to/your/config.json
+   or
+   CUDA_VISIBLE_DEVICES='0,1' transformers-openai-api --config /path/to/your/config.json
    ```
 
 ## 기여
