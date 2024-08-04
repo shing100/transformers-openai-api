@@ -1,28 +1,39 @@
-from setuptools import setup
+from setuptools import setup, find_packages
+
+with open("README.md", "r", encoding="utf-8") as fh:
+    long_description = fh.read()
 
 setup(
-    name='transformers-openai-api',
-    packages=["transformers_openai_api"],
-    version='1.1.0',
-    description='An OpenAI Completions API compatible server for NLP transformers models',
-    author='Jeffrey Quesnelle',
-    author_email='jq@jeffq.com',
-    url='https://github.com/jquesnelle/transformers-openai-api/',
-    license='MIT',
-    install_requires=[
-        'transformers',
-        'accelerate',
-        'torch',
-        'Flask'
-    ],
-    entry_points={
-        'console_scripts': [
-            'transformers-openai-api = transformers_openai_api.__main__:main'
-        ]
-    },
+    name="transformers-openai-api",
+    version="1.0.0",
+    author="shing100",
+    author_email="shing100@naver.com",
+    description="An OpenAI API compatible server for locally running transformers models",
+    long_description=long_description,
+    long_description_content_type="text/markdown",
+    url="https://github.com/yourusername/transformers-openai-api",
+    packages=find_packages(),
+    include_package_data=True,
     classifiers=[
-        "Programming Language :: Python :: 3",
+        "Development Status :: 3 - Alpha",
+        "Intended Audience :: Developers",
         "License :: OSI Approved :: MIT License",
         "Operating System :: OS Independent",
-    ]
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.7",
+        "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.9",
+    ],
+    python_requires=">=3.7",
+    install_requires=[
+        "flask",
+        "transformers",
+        "torch",
+        "jinja2",
+    ],
+    entry_points={
+        "console_scripts": [
+            "transformers-openai-api=transformers_openai_api.__main__:main",
+        ],
+    },
 )
