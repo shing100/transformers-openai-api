@@ -2,24 +2,27 @@ import json
 import re
 import time
 import uuid
-import logging
 import torch
-from typing import Any, Callable, Dict, List, Mapping, Optional
+from typing import Any, Callable, Mapping, Optional
 from flask import Flask, make_response, request, abort, jsonify
 from functools import wraps
 from .models import CausalLM, Model, Seq2Seq
 from .metrics import Metrics
 from .utils import apply_chat_template, load_chat_template
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-models: Dict[str, Model] = {}
-metrics: Optional[Metrics] = None
+models = {}
+metrics: Optional[Metrics]
 
-def check_token(f: Callable) -> Callable:
+def extract_assistant_response(text):
+    match = re.search(r'assistant\s*\n([\s\S]*)', text, re.IGNORECASE)
+    if match:
+        return match.group(1).strip()
+    return "Assistant's response not found."
+
+
+def check_token(f: Callable):
     @wraps(f)
     def decorator(*args, **kwargs):
         bearer_tokens = app.config.get('BEARER_TOKENS')
@@ -31,63 +34,61 @@ def check_token(f: Callable) -> Callable:
             token = authorization[7:]
             if token in bearer_tokens:
                 return f(*args, **kwargs)
-        logger.warning("Invalid token attempt")
-        return make_response(jsonify({'message': 'Invalid token'}), 401)
+        return make_response(jsonify({
+            'message': 'Invalid token'
+        }), 401)
 
     return decorator
+
 
 @app.route('/v1/chat/completions', methods=['POST'])
 @check_token
 def chat_completion():
-    try:
-        data = request.json
-        model_name = data.get('model')
-        messages = data.get('messages', [])
+    data = request.json
+    model_name = data.get('model')
+    messages = data.get('messages', [])
 
-        if not model_name or not messages:
-            logger.error("Missing required parameters: model or messages")
-            return jsonify({"error": "model and messages are required"}), 400
+    if not model_name or not messages:
+        return jsonify({"error": "model and messages are required"}), 400
 
-        model: Model = models.get(model_name)
-        if not model:
-            logger.error(f"Model {model_name} not found")
-            return jsonify({"error": f"Model {model_name} not found"}), 404
+    model: Model = models.get(model_name)
+    if not model:
+        return jsonify({"error": f"Model {model_name} not found"}), 404
 
-        if not isinstance(model, CausalLM):
-            logger.error(f"Model {model_name} does not support chat completions")
-            return jsonify({"error": f"Model {model_name} does not support chat completions"}), 400
+    if not isinstance(model, CausalLM):
+        return jsonify({"error": f"Model {model_name} does not support chat completions"}), 400
 
-        # Apply chat template
-        prompt = apply_chat_template(model.chat_template, messages)
+    # Apply chat template
+    prompt = apply_chat_template(model.chat_template, messages)
 
-        # Generate response
-        response = model.generate(prompt)
+    # Generate response
+    response = model.generate(prompt)
 
-        result = {
-            "id": f"chatcmpl-{uuid.uuid4()}",
-            "object": "chat.completion",
-            "created": int(time.time()),
-            "model": model_name,
-            "choices": [{
-                "index": 0,
-                "message": {
-                    "role": "assistant",
-                    "content": response['choices'][0]['text'],
-                },
-                "finish_reason": "stop"
-            }],
-            "usage": response['usage']
-        }
+    # Extract only the assistant's response
+    assistant_response = extract_assistant_response(response['text'])
 
-        # Update metrics if enabled
-        global metrics
-        if metrics is not None:
-            metrics.update(result)
+    result = {
+        "id": f"chatcmpl-{uuid.uuid4()}",
+        "object": "chat.completion",
+        "created": int(time.time()),
+        "model": model_name,
+        "choices": [{
+            "index": 0,
+            "message": {
+                "role": "assistant",
+                "content": assistant_response,
+            },
+            "finish_reason": "stop"
+        }],
+        "usage": response['usage']
+    }
 
-        return jsonify(result)
-    except Exception as e:
-        logger.exception("An error occurred during chat completion")
-        return jsonify({"error": str(e)}), 500
+    # Update metrics if enabled
+    global metrics
+    if metrics is not None:
+        metrics.update(result)
+
+    return jsonify(result)
 
 
 def convert_model_config(val: Optional[Mapping[str, Any]]) -> Mapping[str, Any]:
@@ -186,40 +187,36 @@ def metrics_():
 
 
 def make_transformers_openai_api(config_path: str) -> Flask:
-    try:
-        app.config.from_file(config_path, load=json.load)
+    app.config.from_file(config_path, load=json.load)
 
-        if app.config.get('METRICS', 1) != 0:
-            global metrics
-            metrics = Metrics()
+    if app.config.get('METRICS', 1) != 0:
+        global metrics
+        metrics = Metrics()
 
-        for mapping, config in app.config['MODELS'].items():
-            if not config.get('ENABLED', True):
-                continue
-            model_config = convert_model_config(config.get('MODEL_CONFIG', {}))
-            model_device = config.get('MODEL_DEVICE', 'cuda')
-            tokenizer_config = convert_tokenizer_config(config.get('TOKENIZER_CONFIG', {}))
-            tokenizer_device = config.get('TOKENIZER_DEVICE', 'cuda')
-            generate_config = convert_generate_config(config.get('GENERATE_CONFIG', {}))
-            decode_config = convert_decode_config(config.get('DECODE_CONFIG', {}))
-
-            if config['TYPE'] == 'Seq2Seq':
-                models[mapping] = Seq2Seq(
-                    config['NAME'], model_config, model_device, tokenizer_config,
-                    tokenizer_device, generate_config, decode_config
-                )
-            elif config['TYPE'] == 'CausalLM':
-                chat_template_name = config.get('CHAT_TEMPLATE')
-                chat_template = load_chat_template(chat_template_name) if chat_template_name else ''
-                models[mapping] = CausalLM(
-                    config['NAME'], model_config, model_device, tokenizer_config,
-                    tokenizer_device, generate_config, decode_config, chat_template
-                )
+    for mapping, config in app.config['MODELS'].items():
+        if config.get('ENABLED', True) == False:
+            continue
+        model_config = convert_model_config(config.get('MODEL_CONFIG'))
+        model_device = config.get('MODEL_DEVICE', 'cuda')
+        tokenizer_config = convert_tokenizer_config(
+            config.get('TOKENIZER_CONFIG'))
+        tokenizer_device = config.get('TOKENIZER_DEVICE', 'cuda')
+        generate_config = convert_generate_config(
+            config.get('GENERATE_CONFIG'))
+        decode_config = convert_decode_config(
+            config.get('DECODE_CONFIG'))
+        if config['TYPE'] == 'Seq2Seq':
+            models[mapping] = Seq2Seq(
+                config['NAME'], model_config, model_device, tokenizer_config, tokenizer_device, generate_config, decode_config)
+        elif config['TYPE'] == 'CausalLM':
+            chat_template_name = config.get('CHAT_TEMPLATE')
+            if chat_template_name:
+                chat_template = load_chat_template(chat_template_name)
             else:
-                raise ValueError(f'Unknown model type {config["TYPE"]}')
+                chat_template = ''
+            models[mapping] = CausalLM(
+                config['NAME'], model_config, model_device, tokenizer_config, tokenizer_device, generate_config, decode_config, chat_template)
+        else:
+            raise RuntimeError(f'Unknown model type {config["TYPE"]}')
 
-        logger.info(f"Loaded {len(models)} models successfully")
-        return app
-    except Exception as e:
-        logger.exception("Failed to initialize the application")
-        raise
+    return app

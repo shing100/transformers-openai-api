@@ -1,10 +1,8 @@
-import os
 from abc import ABC, abstractmethod
-from typing import Any, List, Mapping, Optional, Tuple, Dict
+from typing import Any, List, Mapping, Optional
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer, AutoModelForCausalLM
 from .utils import apply_chat_template
 import torch
-import torch.distributed as dist
 import logging
 
 logging.basicConfig(level=logging.INFO)
@@ -135,110 +133,20 @@ class CausalLM(Model):
                  generate_config: Mapping[str, Any],
                  decode_config: Mapping[str, Any],
                  chat_template: str) -> None:
-
-        if torch.cuda.is_available():
-            self.n_gpu = torch.cuda.device_count()
-            self.model_device = f"cuda:{torch.cuda.current_device()}"
-        else:
-            self.n_gpu = 0
-            self.model_device = "cpu"
-
-        logger.info(f"Using device: {self.model_device}")
-
         self.model = AutoModelForCausalLM.from_pretrained(
             pretrained_model_name_or_path, **model_config)
-
-        if self.n_gpu > 1:
-            logger.info(f"Using {self.n_gpu} GPUs")
-            self.model = torch.nn.DataParallel(self.model)
-
-        self.model.to(self.model_device)
-
+        if model_device is not None:
+            self.model = self.model.to(model_device)
         self.tokenizer = AutoTokenizer.from_pretrained(
             pretrained_model_name_or_path, **tokenizer_config)
         self.generate_config = generate_config
         self.decode_config = decode_config
+        self.tokenizer_device = tokenizer_device
         self.chat_template = chat_template
 
-        if self.tokenizer.pad_token is None:
-            self.tokenizer.pad_token = self.tokenizer.eos_token
-            self.model.config.pad_token_id = self.model.config.eos_token_id
-
-        logger.info(f"Model device: {self.model_device}")
-        logger.info(f"Tokenizer pad_token: {self.tokenizer.pad_token}")
-        logger.info(f"Model pad_token_id: {self.model.config.pad_token_id}")
-
-        # KV 캐시 초기화
-        self.kv_cache = None
-
-    def _get_kv_cache(self, input_ids: torch.Tensor) -> Tuple[
-        torch.Tensor, Optional[Tuple[torch.Tensor, torch.Tensor]]]:
-        if self.kv_cache is None:
-            return input_ids, None
-
-        cache_len = self.kv_cache[0].shape[2]
-        if cache_len > 0:
-            input_ids = input_ids[:, cache_len:]
-
-        return input_ids, self.kv_cache
-
-    def _update_kv_cache(self, past_key_values: Tuple[torch.Tensor, torch.Tensor]) -> None:
-        if self.kv_cache is None:
-            self.kv_cache = past_key_values
-        else:
-            self.kv_cache = tuple(torch.cat([c.to(self.model_device), p.to(self.model_device)], dim=2) for c, p in
-                                  zip(self.kv_cache, past_key_values))
-
-    @torch.no_grad()
     def generate(self, input_text: str) -> Mapping[str, Any]:
-        tokenized_input = self.tokenizer(input_text, return_tensors="pt", padding=True, truncation=True)
-
-        input_ids = tokenized_input.input_ids.to(self.model_device)
-        attention_mask = tokenized_input.attention_mask.to(self.model_device)
-
-        device_generate_config = {
-            k: v.to(self.model_device) if isinstance(v, torch.Tensor) else v
-            for k, v in self.generate_config.items()
-        }
-
-        logger.info(f"Input device: {input_ids.device}")
-        logger.info(f"Model device: {next(self.model.parameters()).device}")
-
-        # KV 캐시 적용
-        input_ids, past_key_values = self._get_kv_cache(input_ids)
-        if past_key_values is not None:
-            past_key_values = tuple(p.to(self.model_device) for p in past_key_values)
-
-        if isinstance(self.model, torch.nn.DataParallel):
-            output = self.model.module.generate(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                pad_token_id=self.tokenizer.pad_token_id,
-                use_cache=True,
-                past_key_values=past_key_values,
-                **device_generate_config
-            )
-        else:
-            output = self.model.generate(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                pad_token_id=self.tokenizer.pad_token_id,
-                use_cache=True,
-                past_key_values=past_key_values,
-                **device_generate_config
-            )
-
-        # KV 캐시 업데이트
-        if hasattr(self.model, 'module'):
-            model = self.model.module
-        else:
-            model = self.model
-
-        if hasattr(model, 'get_encoder'):
-            self._update_kv_cache(model.get_encoder().past_key_values)
-        else:
-            self._update_kv_cache(output.past_key_values)
-
+        input_ids = self.tokenizer(input_text, return_tensors="pt").input_ids.to(self.tokenizer_device)
+        output = self.model.generate(input_ids, **self.generate_config)
         response = self.tokenizer.decode(output[0], **self.decode_config)
 
         return {
@@ -253,7 +161,3 @@ class CausalLM(Model):
     def chat_completions(self, messages: List[Mapping[str, str]]) -> Mapping[str, Any]:
         prompt = apply_chat_template(self.chat_template, messages)
         return self.generate(prompt)
-
-    def reset_kv_cache(self) -> None:
-        """KV 캐시를 리셋합니다."""
-        self.kv_cache = None
