@@ -16,10 +16,10 @@ def extract_assistant_response(text):
 def test_chat_completions():
     url = f"{BASE_URL}/chat/completions"
     headers = {
-        "Content-Type": "application/json",
+        "Content-Type": "application/json"
     }
     data = {
-        "model": "CarrotAI/Carrot-Ko-2B-Instruct",  # config.json에 설정된 모델 이름으로 변경하세요
+        "model": "Carrot-Ko-2B-Instruct",  # config.json에 설정된 모델 이름으로 변경하세요
         "messages": [
             {"role": "system", "content": "You are a helpful assistant."},
             {"role": "user", "content": "hello?"}
