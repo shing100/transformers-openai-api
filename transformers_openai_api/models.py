@@ -135,28 +135,36 @@ class CausalLM(Model):
                  chat_template: str) -> None:
         self.model = AutoModelForCausalLM.from_pretrained(
             pretrained_model_name_or_path, **model_config)
-        if model_device is not None:
-            self.model = self.model.to(model_device)
+        self.model_device = torch.device(model_device if model_device else "cpu")
+        self.model = self.model.to(self.model_device)
+
         self.tokenizer = AutoTokenizer.from_pretrained(
             pretrained_model_name_or_path, **tokenizer_config)
         self.generate_config = generate_config
         self.decode_config = decode_config
         self.tokenizer_device = tokenizer_device
         self.chat_template = chat_template
-        self.model_device = model_device
 
+        # pad_token 설정
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
             self.model.config.pad_token_id = self.model.config.eos_token_id
 
+        logger.info(f"Model device: {self.model_device}")
         logger.info(f"Tokenizer pad_token: {self.tokenizer.pad_token}")
         logger.info(f"Model pad_token_id: {self.model.config.pad_token_id}")
 
     @torch.no_grad()
     def generate(self, input_text: str) -> Mapping[str, Any]:
+        # Tokenize the input text and create attention mask
         tokenized_input = self.tokenizer(input_text, return_tensors="pt", padding=True, truncation=True)
+
+        # Move input tensors to the same device as the model
         input_ids = tokenized_input.input_ids.to(self.model_device)
         attention_mask = tokenized_input.attention_mask.to(self.model_device)
+
+        logger.info(f"Input device: {input_ids.device}")
+        logger.info(f"Model device: {next(self.model.parameters()).device}")
 
         # Generate output
         output = self.model.generate(
