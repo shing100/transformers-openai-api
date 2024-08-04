@@ -1,4 +1,5 @@
 import json
+import re
 import time
 import uuid
 import torch
@@ -7,12 +8,18 @@ from flask import Flask, make_response, request, abort, jsonify
 from functools import wraps
 from .models import CausalLM, Model, Seq2Seq
 from .metrics import Metrics
-from .utils import load_chat_template
+from .utils import apply_chat_template
 
 
 app = Flask(__name__)
 models = {}
 metrics: Optional[Metrics]
+
+def extract_assistant_response(text):
+    match = re.search(r'assistant\s*\n([\s\S]*)', text, re.IGNORECASE)
+    if match:
+        return match.group(1).strip()
+    return "Assistant's response not found."
 
 
 def check_token(f: Callable):
@@ -51,26 +58,26 @@ def chat_completion():
     if not isinstance(model, CausalLM):
         return jsonify({"error": f"Model {model_name} does not support chat completions"}), 400
 
-    # Process messages and generate response
-    response = model.chat_completions(messages)
+    # Apply chat template
+    prompt = apply_chat_template(model.chat_template, messages)
 
-    # Prepare the response in the new format
-    chat_completion_id = f"chatcmpl-{uuid.uuid4()}"
-    created_time = int(time.time())
+    # Generate response
+    response = model.generate(prompt)
+
+    # Extract only the assistant's response
+    assistant_response = extract_assistant_response(response['text'])
 
     result = {
-        "id": chat_completion_id,
+        "id": f"chatcmpl-{uuid.uuid4()}",
         "object": "chat.completion",
-        "created": created_time,
+        "created": int(time.time()),
         "model": model_name,
-        "system_fingerprint": "fp_" + uuid.uuid4().hex[:10],
         "choices": [{
             "index": 0,
             "message": {
                 "role": "assistant",
-                "content": response['text'].strip(),
+                "content": assistant_response,
             },
-            "logprobs": None,
             "finish_reason": "stop"
         }],
         "usage": response['usage']
