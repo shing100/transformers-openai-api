@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 from typing import Any, List, Mapping, Optional
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer, AutoModelForCausalLM
 from .utils import apply_chat_template
+import torch
 
 
 def get_prompts(request: Mapping[str, Any]) -> List[str]:
@@ -141,8 +142,19 @@ class CausalLM(Model):
         self.chat_template = chat_template
 
     def generate(self, input_text: str) -> Mapping[str, Any]:
-        input_ids = self.tokenizer(input_text, return_tensors="pt").input_ids.to(self.tokenizer_device)
-        output = self.model.generate(input_ids, **self.generate_config)
+        inputs = self.tokenizer(input_text, return_tensors="pt", padding=True, truncation=True)
+        input_ids = inputs.input_ids.to(self.device)
+        attention_mask = inputs.attention_mask.to(self.device)
+
+        # Generate output
+        with torch.no_grad():  # Disable gradient calculation
+            output = self.model.generate(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                **self.generate_config
+            )
+
+        # Decode output
         response = self.tokenizer.decode(output[0], **self.decode_config)
 
         return {
