@@ -3,7 +3,6 @@ import json
 import re
 
 BASE_URL = "http://localhost:13000/v1"
-API_KEY = "your-api-key"  # 필요한 경우 실제 API 키로 변경하세요
 
 
 def extract_assistant_response(text):
@@ -18,10 +17,9 @@ def test_chat_completions():
     url = f"{BASE_URL}/chat/completions"
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {API_KEY}"  # BEARER_TOKENS를 사용하지 않는 경우 이 줄을 제거하세요
     }
     data = {
-        "model": "gpt-3.5-turbo",  # config.json에 설정된 모델 이름으로 변경하세요
+        "model": "CarrotAI/Carrot-Ko-2B-Instruct",  # config.json에 설정된 모델 이름으로 변경하세요
         "messages": [
             {"role": "system", "content": "You are a helpful assistant."},
             {"role": "user", "content": "hello?"}
