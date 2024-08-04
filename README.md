@@ -1,6 +1,6 @@
 # transformers-openai-api
 
-`transformers-openai-api`는 'https://github.com/jquesnelle/transformers-openai-api'을 참고참고하였습니다. 로컬에서 실행되는 NLP [transformers](https://github.com/huggingface/transformers/) 모델을 [OpenAI Completions API](https://beta.openai.com/docs/api-reference/completions) 호환 서버로 호스팅하는 도구입니다. 이를 통해 `transformers` 모델을 실행하고 [OpenAI Python Client](https://github.com/openai/openai-python)나 [LangChain](https://github.com/hwchase17/langchain)과 같은 OpenAI 도구와 호환되는 API를 통해 제공할 수 있습니다.
+`transformers-openai-api`는 `https://github.com/jquesnelle/transformers-openai-api`을 참고하였습니다. 로컬에서 실행되는 NLP [transformers](https://github.com/huggingface/transformers/) 모델을 [OpenAI Completions API](https://beta.openai.com/docs/api-reference/completions) 호환 서버로 호스팅하는 도구입니다. 이를 통해 `transformers` 모델을 실행하고 [OpenAI Python Client](https://github.com/openai/openai-python)나 [LangChain](https://github.com/hwchase17/langchain)과 같은 OpenAI 도구와 호환되는 API를 통해 제공할 수 있습니다.
 
 ## 특징
 
