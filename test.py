@@ -51,6 +51,4 @@ if __name__ == "__main__":
 
     test_models()
     print("\n")
-    test_completions()
-    print("\n")
     test_chat_completions()
