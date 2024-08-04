@@ -145,8 +145,17 @@ class CausalLM(Model):
         self.chat_template = chat_template
 
     def generate(self, input_text: str) -> Mapping[str, Any]:
-        input_ids = self.tokenizer(input_text, return_tensors="pt").input_ids.to(self.tokenizer_device)
-        output = self.model.generate(input_ids, **self.generate_config)
+        inputs = self.tokenizer(input_text, return_tensors="pt", padding=True, truncation=True)
+        input_ids = inputs.input_ids.to(self.tokenizer_device)
+        attention_mask = inputs.attention_mask.to(self.tokenizer_device)
+
+        output = self.model.generate(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            pad_token_id=self.tokenizer.pad_token_id or self.tokenizer.eos_token_id,
+            **self.generate_config
+        )
+
         response = self.tokenizer.decode(output[0], **self.decode_config)
 
         return {
