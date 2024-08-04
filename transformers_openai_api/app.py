@@ -19,13 +19,6 @@ app = Flask(__name__)
 models: Dict[str, Model] = {}
 metrics: Optional[Metrics] = None
 
-def extract_assistant_response(text: str) -> str:
-    match = re.search(r'assistant\s*\n([\s\S]*)', text, re.IGNORECASE)
-    if match:
-        return match.group(1).strip()
-    logger.warning("Assistant's response not found in the generated text.")
-    return "Assistant's response not found."
-
 def check_token(f: Callable) -> Callable:
     @wraps(f)
     def decorator(*args, **kwargs):
@@ -70,9 +63,6 @@ def chat_completion():
         # Generate response
         response = model.generate(prompt)
 
-        # Extract only the assistant's response
-        assistant_response = extract_assistant_response(response['text'])
-
         result = {
             "id": f"chatcmpl-{uuid.uuid4()}",
             "object": "chat.completion",
@@ -82,7 +72,7 @@ def chat_completion():
                 "index": 0,
                 "message": {
                     "role": "assistant",
-                    "content": assistant_response,
+                    "content": response['choices'][0]['text'],
                 },
                 "finish_reason": "stop"
             }],
