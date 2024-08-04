@@ -143,11 +143,29 @@ class CausalLM(Model):
         self.decode_config = decode_config
         self.tokenizer_device = tokenizer_device
         self.chat_template = chat_template
+        self.model_device = model_device
+
+        if self.tokenizer.pad_token is None:
+            self.tokenizer.pad_token = self.tokenizer.eos_token
+            self.model.config.pad_token_id = self.model.config.eos_token_id
+
+        logger.info(f"Tokenizer pad_token: {self.tokenizer.pad_token}")
+        logger.info(f"Model pad_token_id: {self.model.config.pad_token_id}")
 
     @torch.no_grad()
     def generate(self, input_text: str) -> Mapping[str, Any]:
-        input_ids = self.tokenizer(input_text, return_tensors="pt").input_ids.to(self.tokenizer_device)
-        output = self.model.generate(input_ids, **self.generate_config)
+        tokenized_input = self.tokenizer(input_text, return_tensors="pt", padding=True, truncation=True)
+        input_ids = tokenized_input.input_ids.to(self.model_device)
+        attention_mask = tokenized_input.attention_mask.to(self.model_device)
+
+        # Generate output
+        output = self.model.generate(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            pad_token_id=self.tokenizer.pad_token_id,
+            **self.generate_config
+        )
+
         response = self.tokenizer.decode(output[0], **self.decode_config)
 
         return {
