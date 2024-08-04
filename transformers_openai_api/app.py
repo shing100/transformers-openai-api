@@ -1,6 +1,7 @@
 import json
 import time
 import uuid
+import torch
 from typing import Any, Callable, Mapping, Optional
 from flask import Flask, make_response, request, abort, jsonify
 from functools import wraps
