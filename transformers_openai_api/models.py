@@ -172,6 +172,7 @@ class CausalLM(Model):
         self.chat_template = self.generation_config.chat_template
         self.stop_token_ids = self.generation_config.stop_token_ids
 
+    @torch.no_grad()
     def generate(self, input_text: str) -> Mapping[str, Any]:
         inputs = self.tokenizer(input_text, return_tensors="pt", padding=True, truncation=True)
         input_ids = inputs.input_ids.to(self.tokenizer_device)
