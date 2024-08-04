@@ -1,9 +1,11 @@
 from abc import ABC, abstractmethod
 from typing import Any, List, Mapping, Optional
-from transformers import AutoModelForSeq2SeqLM, AutoTokenizer, AutoModelForCausalLM
+from transformers import AutoModelForSeq2SeqLM, AutoTokenizer, AutoModelForCausalLM, GenerationConfig
 from .utils import apply_chat_template
 import torch
 import logging
+import os
+import json
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -124,6 +126,15 @@ class Seq2Seq(Model):
         return _completions_auto(request, self.tokenizer, self.tokenizer_device, self.model, self.generate_config, self.decode_config, False)
 
 
+def load_model_config(model_name: str) -> dict:
+    config_dir = os.path.join(os.path.dirname(__file__), 'generation_configs')
+    config_path = os.path.join(config_dir, f"{model_name}.json")
+    if os.path.exists(config_path):
+        with open(config_path, 'r') as f:
+            return json.load(f)
+    return {}
+
+
 class CausalLM(Model):
     def __init__(self, pretrained_model_name_or_path: str,
                  model_config: Mapping[str, Any],
@@ -139,10 +150,27 @@ class CausalLM(Model):
             self.model = self.model.to(model_device)
         self.tokenizer = AutoTokenizer.from_pretrained(
             pretrained_model_name_or_path, **tokenizer_config)
-        self.generate_config = generate_config
+        if self.tokenizer.pad_token is None:
+            self.tokenizer.pad_token = self.tokenizer.eos_token
+
+        # Load model-specific config
+        model_name = os.path.basename(pretrained_model_name_or_path)
+        model_specific_config = load_model_config(model_name)
+
+        # Prepare generation config
+        generation_config_dict = {
+            "chat_template": model_specific_config.get("chat_template", chat_template),
+            "stop_token_ids": model_specific_config.get("stop_token_ids", []),
+            "pad_token_id": self.tokenizer.pad_token_id,
+            "eos_token_id": self.tokenizer.eos_token_id,
+        }
+        generation_config_dict.update(generate_config)
+        self.generation_config = GenerationConfig(**generation_config_dict)
+
         self.decode_config = decode_config
         self.tokenizer_device = tokenizer_device
-        self.chat_template = chat_template
+        self.chat_template = self.generation_config.chat_template
+        self.stop_token_ids = self.generation_config.stop_token_ids
 
     def generate(self, input_text: str) -> Mapping[str, Any]:
         inputs = self.tokenizer(input_text, return_tensors="pt", padding=True, truncation=True)
@@ -152,8 +180,8 @@ class CausalLM(Model):
         output = self.model.generate(
             input_ids=input_ids,
             attention_mask=attention_mask,
-            pad_token_id=self.tokenizer.pad_token_id or self.tokenizer.eos_token_id,
-            **self.generate_config
+            generation_config=self.generation_config,
+            stopping_criteria=self.get_stopping_criteria()
         )
 
         response = self.tokenizer.decode(output[0], **self.decode_config)
@@ -166,6 +194,21 @@ class CausalLM(Model):
                 "total_tokens": output.size(1)
             }
         }
+
+    def get_stopping_criteria(self):
+        from transformers import StoppingCriteria, StoppingCriteriaList
+
+        class StopOnTokens(StoppingCriteria):
+            def __init__(self, stop_token_ids):
+                self.stop_token_ids = stop_token_ids
+
+            def __call__(self, input_ids, scores, **kwargs):
+                for stop_id in self.stop_token_ids:
+                    if input_ids[0][-1] == stop_id:
+                        return True
+                return False
+
+        return StoppingCriteriaList([StopOnTokens(self.stop_token_ids)])
 
     def chat_completions(self, messages: List[Mapping[str, str]]) -> Mapping[str, Any]:
         prompt = apply_chat_template(self.chat_template, messages)
