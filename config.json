@@ -1,0 +1,29 @@
+{
+    "MODELS": {
+        "Carrot-Ko-2B-Instruct": {
+            "NAME": "CarrotAI/Carrot-Ko-2B-Instruct",
+            "TYPE": "CausalLM",
+            "MODEL_CONFIG": {
+                "device_map": "auto",
+                "trust_remote_code": true,
+                "torch_dtype": "float16"
+            },
+            "MODEL_DEVICE": null,
+            "TOKENIZER_CONFIG": {
+                "trust_remote_code": true
+            },
+            "GENERATE_CONFIG": {
+                "max_new_tokens": 2048,
+                "do_sample": true,
+                "temperature": 0.7,
+                "top_p": 0.9
+            },
+            "DECODE_CONFIG": {
+                "skip_special_tokens": true
+            },
+            "CHAT_TEMPLATE": "chatml"
+        }
+    },
+    "HOST": "0.0.0.0",
+    "PORT": 13000
+}
