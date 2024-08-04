@@ -3,10 +3,6 @@ from typing import Any, List, Mapping, Optional
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer, AutoModelForCausalLM
 from .utils import apply_chat_template
 import torch
-import logging
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 def get_prompts(request: Mapping[str, Any]) -> List[str]:
     prompt = request['prompt']
@@ -127,78 +123,36 @@ class Seq2Seq(Model):
 class CausalLM(Model):
     def __init__(self, pretrained_model_name_or_path: str,
                  model_config: Mapping[str, Any],
-                 model_device: str,
+                 model_device: Optional[str],
                  tokenizer_config: Mapping[str, Any],
-                 tokenizer_device: str,
+                 tokenizer_device: Optional[str],
                  generate_config: Mapping[str, Any],
                  decode_config: Mapping[str, Any],
                  chat_template: str) -> None:
         self.model = AutoModelForCausalLM.from_pretrained(
             pretrained_model_name_or_path, **model_config)
+        if model_device is not None:
+            self.model = self.model.to(model_device)
         self.tokenizer = AutoTokenizer.from_pretrained(
             pretrained_model_name_or_path, **tokenizer_config)
         self.generate_config = generate_config
         self.decode_config = decode_config
+        self.tokenizer_device = tokenizer_device
         self.chat_template = chat_template
 
-        if not torch.cuda.is_available():
-            raise RuntimeError("CUDA is not available. GPU is required.")
-
-        self.device = torch.device("cuda")
-        logger.info(f"Using device: {self.device}")
-
-        # Move model to GPU
-        self.model = self.model.to(self.device)
-
-        # Log available GPU memory
-        logger.info(f"Available GPU memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
-
     def generate(self, input_text: str) -> Mapping[str, Any]:
-        try:
-            # Clear CUDA cache
-            torch.cuda.empty_cache()
+        input_ids = self.tokenizer(input_text, return_tensors="pt").input_ids.to(self.tokenizer_device)
+        output = self.model.generate(input_ids, **self.generate_config)
+        response = self.tokenizer.decode(output[0], **self.decode_config)
 
-            # Tokenize input
-            inputs = self.tokenizer(input_text, return_tensors="pt", padding=True, truncation=True, max_length=512)
-            input_ids = inputs.input_ids.to(self.device)
-            attention_mask = inputs.attention_mask.to(self.device)
-
-            # Log input shape and GPU memory usage
-            logger.info(f"Input shape: {input_ids.shape}")
-            logger.info(f"GPU memory allocated: {torch.cuda.memory_allocated() / 1e9:.2f} GB")
-            logger.info(f"GPU memory cached: {torch.cuda.memory_reserved() / 1e9:.2f} GB")
-
-            # Generate output
-            with torch.no_grad():  # Disable gradient calculation
-                output = self.model.generate(
-                    input_ids=input_ids,
-                    attention_mask=attention_mask,
-                    **self.generate_config
-                )
-
-            # Decode output
-            response = self.tokenizer.decode(output[0], **self.decode_config)
-
-            return {
-                "text": response,
-                "usage": {
-                    "prompt_tokens": input_ids.size(1),
-                    "completion_tokens": output.size(1) - input_ids.size(1),
-                    "total_tokens": output.size(1)
-                }
+        return {
+            "text": response,
+            "usage": {
+                "prompt_tokens": input_ids.size(1),
+                "completion_tokens": output.size(1) - input_ids.size(1),
+                "total_tokens": output.size(1)
             }
-        except RuntimeError as e:
-            logger.error(f"CUDA error occurred: {str(e)}")
-            logger.info("Attempting to reduce batch size or input length...")
-
-            # Reduce input length and try again
-            max_length = min(input_ids.size(1) // 2, 256)
-            logger.info(f"Retrying with max_length: {max_length}")
-            return self.generate(input_text[:max_length * 4])  # Approximate token to character ratio
-
-    def __del__(self):
-        # Clear CUDA cache when the object is deleted
-        torch.cuda.empty_cache()
+        }
 
     def chat_completions(self, messages: List[Mapping[str, str]]) -> Mapping[str, Any]:
         prompt = apply_chat_template(self.chat_template, messages)
