@@ -1,8 +1,10 @@
+import os
 from abc import ABC, abstractmethod
-from typing import Any, List, Mapping, Optional, Tuple
+from typing import Any, List, Mapping, Optional, Tuple, Dict
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer, AutoModelForCausalLM
 from .utils import apply_chat_template
 import torch
+import torch.distributed as dist
 import logging
 
 logging.basicConfig(level=logging.INFO)
@@ -133,10 +135,24 @@ class CausalLM(Model):
                  generate_config: Mapping[str, Any],
                  decode_config: Mapping[str, Any],
                  chat_template: str) -> None:
-        self.model_device = torch.device(
-            model_device if model_device else "cuda" if torch.cuda.is_available() else "cpu")
+
+        if torch.cuda.is_available():
+            self.n_gpu = torch.cuda.device_count()
+            self.model_device = f"cuda:{torch.cuda.current_device()}"
+        else:
+            self.n_gpu = 0
+            self.model_device = "cpu"
+
+        logger.info(f"Using device: {self.model_device}")
+
         self.model = AutoModelForCausalLM.from_pretrained(
-            pretrained_model_name_or_path, **model_config).to(self.model_device)
+            pretrained_model_name_or_path, **model_config)
+
+        if self.n_gpu > 1:
+            logger.info(f"Using {self.n_gpu} GPUs")
+            self.model = torch.nn.DataParallel(self.model)
+
+        self.model.to(self.model_device)
 
         self.tokenizer = AutoTokenizer.from_pretrained(
             pretrained_model_name_or_path, **tokenizer_config)
@@ -170,7 +186,8 @@ class CausalLM(Model):
         if self.kv_cache is None:
             self.kv_cache = past_key_values
         else:
-            self.kv_cache = tuple(torch.cat([c, p], dim=2) for c, p in zip(self.kv_cache, past_key_values))
+            self.kv_cache = tuple(torch.cat([c.to(self.model_device), p.to(self.model_device)], dim=2) for c, p in
+                                  zip(self.kv_cache, past_key_values))
 
     @torch.no_grad()
     def generate(self, input_text: str) -> Mapping[str, Any]:
@@ -189,18 +206,38 @@ class CausalLM(Model):
 
         # KV 캐시 적용
         input_ids, past_key_values = self._get_kv_cache(input_ids)
+        if past_key_values is not None:
+            past_key_values = tuple(p.to(self.model_device) for p in past_key_values)
 
-        output = self.model.generate(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            pad_token_id=self.tokenizer.pad_token_id,
-            use_cache=True,
-            past_key_values=past_key_values,
-            **device_generate_config
-        )
+        if isinstance(self.model, torch.nn.DataParallel):
+            output = self.model.module.generate(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                pad_token_id=self.tokenizer.pad_token_id,
+                use_cache=True,
+                past_key_values=past_key_values,
+                **device_generate_config
+            )
+        else:
+            output = self.model.generate(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                pad_token_id=self.tokenizer.pad_token_id,
+                use_cache=True,
+                past_key_values=past_key_values,
+                **device_generate_config
+            )
 
         # KV 캐시 업데이트
-        self._update_kv_cache(self.model.get_encoder().past_key_values)
+        if hasattr(self.model, 'module'):
+            model = self.model.module
+        else:
+            model = self.model
+
+        if hasattr(model, 'get_encoder'):
+            self._update_kv_cache(model.get_encoder().past_key_values)
+        else:
+            self._update_kv_cache(output.past_key_values)
 
         response = self.tokenizer.decode(output[0], **self.decode_config)
 
