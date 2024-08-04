@@ -8,7 +8,7 @@ from flask import Flask, make_response, request, abort, jsonify
 from functools import wraps
 from .models import CausalLM, Model, Seq2Seq
 from .metrics import Metrics
-from .utils import apply_chat_template
+from .utils import apply_chat_template, load_chat_template
 
 
 app = Flask(__name__)
