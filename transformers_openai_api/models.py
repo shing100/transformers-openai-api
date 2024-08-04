@@ -3,6 +3,10 @@ from typing import Any, List, Mapping, Optional
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer, AutoModelForCausalLM
 from .utils import apply_chat_template
 import torch
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 def get_prompts(request: Mapping[str, Any]) -> List[str]:
     prompt = request['prompt']
@@ -140,6 +144,7 @@ class CausalLM(Model):
         self.tokenizer_device = tokenizer_device
         self.chat_template = chat_template
 
+    @torch.no_grad()
     def generate(self, input_text: str) -> Mapping[str, Any]:
         input_ids = self.tokenizer(input_text, return_tensors="pt").input_ids.to(self.tokenizer_device)
         output = self.model.generate(input_ids, **self.generate_config)
