@@ -133,39 +133,47 @@ class CausalLM(Model):
                  generate_config: Mapping[str, Any],
                  decode_config: Mapping[str, Any],
                  chat_template: str) -> None:
+        self.model_device = torch.device(
+            model_device if model_device else "cuda" if torch.cuda.is_available() else "cpu")
         self.model = AutoModelForCausalLM.from_pretrained(
-            pretrained_model_name_or_path, **model_config)
-        if model_device is not None:
-            self.model = self.model.to(model_device)
+            pretrained_model_name_or_path, **model_config).to(self.model_device)
+
         self.tokenizer = AutoTokenizer.from_pretrained(
             pretrained_model_name_or_path, **tokenizer_config)
         self.generate_config = generate_config
         self.decode_config = decode_config
-        self.tokenizer_device = tokenizer_device
         self.chat_template = chat_template
-        self.model_device = model_device
 
-        # 추가된 부분: pad_token 설정
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
             self.model.config.pad_token_id = self.model.config.eos_token_id
 
+        logger.info(f"Model device: {self.model_device}")
         logger.info(f"Tokenizer pad_token: {self.tokenizer.pad_token}")
         logger.info(f"Model pad_token_id: {self.model.config.pad_token_id}")
 
     @torch.no_grad()
     def generate(self, input_text: str) -> Mapping[str, Any]:
-        # Tokenize the input text and create attention mask
         tokenized_input = self.tokenizer(input_text, return_tensors="pt", padding=True, truncation=True)
+
+        # 모든 입력 텐서를 모델과 동일한 디바이스로 이동
         input_ids = tokenized_input.input_ids.to(self.model_device)
         attention_mask = tokenized_input.attention_mask.to(self.model_device)
 
-        # Generate output
+        # generate_config의 모든 텐서도 올바른 디바이스로 이동
+        device_generate_config = {
+            k: v.to(self.model_device) if isinstance(v, torch.Tensor) else v
+            for k, v in self.generate_config.items()
+        }
+
+        logger.info(f"Input device: {input_ids.device}")
+        logger.info(f"Model device: {next(self.model.parameters()).device}")
+
         output = self.model.generate(
             input_ids=input_ids,
             attention_mask=attention_mask,
             pad_token_id=self.tokenizer.pad_token_id,
-            **self.generate_config
+            **device_generate_config
         )
 
         response = self.tokenizer.decode(output[0], **self.decode_config)
